@@ -31,5 +31,7 @@
   <PropertyGroup Condition="'$(TargetFramework)' == 'netwasm0.1'">
     <!-- Keep FluentValidation's upstream CLS contract. These diagnostics come from incomplete CLS metadata in the current NetWasm references. -->
     <NoWarn>$(NoWarn);CS3001;CS3002;CS3003;CS3009;CS3024;CS3027</NoWarn>
+    <!-- Preserve the upstream strong-name identity; NetWasm references are unsigned. -->
+    <NoWarn>$(NoWarn);CS8002</NoWarn>
   </PropertyGroup>
 </Project>
