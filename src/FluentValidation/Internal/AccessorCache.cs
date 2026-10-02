@@ -1,7 +1,11 @@
 namespace FluentValidation.Internal;
 
 using System;
+#if NETWASM
+using System.Collections.Generic;
+#else
 using System.Collections.Concurrent;
+#endif
 using System.Linq.Expressions;
 using System.Reflection;
 
@@ -10,7 +14,11 @@ using System.Reflection;
 /// </summary>
 /// <typeparam name="T">The type for which to cache member accessors.</typeparam>
 public static class AccessorCache<T> {
+	#if NETWASM
+	private static readonly Dictionary<Key, Delegate> _cache = new();
+	#else
 	private static readonly ConcurrentDictionary<Key, Delegate> _cache = new();
+	#endif
 
 	/// <summary>
 	/// Gets an accessor func based on an expression.
@@ -23,7 +31,7 @@ public static class AccessorCache<T> {
 	/// <returns>An accessor func.</returns>
 	public static Func<T, TProperty> GetCachedAccessor<TProperty>(MemberInfo member, Expression<Func<T, TProperty>> expression, bool bypassCache = false, string cachePrefix = null) {
 		if (bypassCache || ValidatorOptions.Global.DisableAccessorCache) {
-			return expression.Compile();
+			return CompileAccessor(expression);
 		}
 
 		Key key;
@@ -36,14 +44,35 @@ public static class AccessorCache<T> {
 			}
 			else {
 				// Unsupported expression type. Non cacheable.
-				return expression.Compile();
+				return CompileAccessor(expression);
 			}
 		}
 		else {
 			key = new Key(member, expression, cachePrefix);
 		}
 
-		return (Func<T,TProperty>)_cache.GetOrAdd(key, static (_, exp) => exp.Compile(), expression);
+		return GetOrAdd(key, expression);
+	}
+
+	private static Func<T, TProperty> GetOrAdd<TProperty>(Key key, Expression<Func<T, TProperty>> expression) {
+#if NETWASM
+		if (!_cache.TryGetValue(key, out var accessor)) {
+			accessor = CompileAccessor(expression);
+			_cache.Add(key, accessor);
+		}
+		return (Func<T, TProperty>)accessor;
+#else
+		return (Func<T,TProperty>)_cache.GetOrAdd(key, static (_, exp) => CompileAccessor(exp), expression);
+#endif
+	}
+
+	private static Func<T, TProperty> CompileAccessor<TProperty>(Expression<Func<T, TProperty>> expression) {
+#if NETWASM
+		// NetWasm uses its AOT-safe expression interpreter instead of runtime code generation.
+		return expression.Compile(preferInterpretation: true);
+#else
+		return expression.Compile();
+#endif
 	}
 
 	public static void Clear() {

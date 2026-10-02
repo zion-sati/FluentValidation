@@ -1,0 +1,35 @@
+<Project Sdk="NetWasm.Sdk">
+  <PropertyGroup>
+    <TargetFramework>netwasm0.1</TargetFramework>
+    <PackageId>NetWasm.FluentValidation</PackageId>
+    <AssemblyName>FluentValidation</AssemblyName>
+    <RootNamespace>FluentValidation</RootNamespace>
+    <PackageVersion Condition="'$(PackageVersion)' == ''">0.0.0-local</PackageVersion>
+    <Version>$(PackageVersion)</Version>
+    <Description>FluentValidation 12.1.1 for NetWasm.</Description>
+    <PackageLicenseExpression>Apache-2.0</PackageLicenseExpression>
+    <PackageProjectUrl>https://docs.fluentvalidation.net/</PackageProjectUrl>
+    <RepositoryUrl>https://github.com/zion-sati/FluentValidation</RepositoryUrl>
+    <RepositoryType>git</RepositoryType>
+    <PackageReadmeFile>README.md</PackageReadmeFile>
+    <GenerateDocumentationFile Condition="'$(Configuration)' == 'Release'">true</GenerateDocumentationFile>
+    <GenerateNeutralResourcesLanguageAttribute>false</GenerateNeutralResourcesLanguageAttribute>
+    <DefineConstants>$(DefineConstants);NETWASM</DefineConstants>
+    <NoWarn>$(NoWarn);1591</NoWarn>
+  </PropertyGroup>
+  <ItemGroup>
+    <Compile Include="../FluentValidation/**/*.cs"
+             Exclude="../FluentValidation/**/bin/**/*.cs;../FluentValidation/**/obj/**/*.cs;../FluentValidation/AssemblyScanner.cs;../FluentValidation/ValidatorFactoryBase.cs;../FluentValidation/IValidatorFactory.cs" />
+    <Compile Include="../CommonAssemblyInfo.cs" Link="CommonAssemblyInfo.cs" />
+    <None Include="README.md" Pack="true" PackagePath="/" />
+    <PackageReference Include="Zomp.SyncMethodGenerator" Version="1.3.8-beta" PrivateAssets="all" />
+  </ItemGroup>
+  <ItemGroup Condition="'$(TargetFramework)' == 'netwasm0.1'">
+    <PackageReference Include="NetWasm.System.Linq" Version="0.4.0" />
+    <PackageReference Include="NetWasm.System.Text.RegularExpressions" Version="0.4.1" />
+  </ItemGroup>
+  <PropertyGroup Condition="'$(TargetFramework)' == 'netwasm0.1'">
+    <!-- Keep FluentValidation's upstream CLS contract. These diagnostics come from incomplete CLS metadata in the current NetWasm references. -->
+    <NoWarn>$(NoWarn);CS3001;CS3002;CS3003;CS3009;CS3024;CS3027</NoWarn>
+  </PropertyGroup>
+</Project>

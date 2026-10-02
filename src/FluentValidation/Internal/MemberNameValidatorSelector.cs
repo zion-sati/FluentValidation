@@ -31,8 +31,13 @@ public partial class MemberNameValidatorSelector : IValidatorSelector {
 	internal const string DisableCascadeKey = "_FV_DisableSelectorCascadeForChildRules";
 	readonly IEnumerable<string> _memberNames;
 
+#if NETWASM
+	private static readonly Regex _collectionIndexNormalizer = new Regex(@"\[.*?\]");
+	private static Regex CollectionIndexNormalizer() => _collectionIndexNormalizer;
+#else
 	[GeneratedRegex(@"\[.*?\]")]
 	private static partial Regex CollectionIndexNormalizer();
+#endif
 
 	/// <summary>
 	/// Creates a new instance of MemberNameValidatorSelector.

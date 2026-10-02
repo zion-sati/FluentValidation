@@ -21,14 +21,23 @@
 namespace FluentValidation.Resources;
 
 using System;
+#if NETWASM
+using System.Collections.Generic;
+#else
 using System.Collections.Concurrent;
+#endif
 using System.Globalization;
 
 /// <summary>
 /// Allows the default error message translations to be managed.
 /// </summary>
 public class LanguageManager : ILanguageManager {
+	#if NETWASM
+	// NetWasm currently executes single-threaded, so a plain dictionary is sufficient for this cache.
+	private readonly Dictionary<string, string> _languages = new Dictionary<string, string>();
+	#else
 	private readonly ConcurrentDictionary<string, string> _languages = new ConcurrentDictionary<string, string>();
+	#endif
 
 	/// <summary>
 	/// Language factory.
@@ -130,32 +139,67 @@ public class LanguageManager : ILanguageManager {
 	public virtual string GetString(string key, CultureInfo culture = null) {
 		string value;
 
+#if NETWASM
+		if (Enabled) {
+			culture = culture ?? Culture ?? CultureInfo.InvariantCulture;
+			var cultureName = string.IsNullOrEmpty(culture.Name) ? EnglishLanguage.Culture : culture.Name;
+			value = GetOrAdd(cultureName + ":" + key, () => GetTranslation(cultureName, key));
+
+			// NetWasm has no current UI culture or CultureInfo parent API yet. Follow the
+			// usual hyphenated culture-name fallback, then use FluentValidation's English text.
+			while (value == null) {
+				var separator = cultureName.LastIndexOf('-');
+				if (separator < 0) break;
+				cultureName = cultureName.Substring(0, separator);
+				value = GetOrAdd(cultureName + ":" + key, () => GetTranslation(cultureName, key));
+			}
+
+			if (value == null && cultureName != EnglishLanguage.Culture) {
+				value = GetOrAdd(EnglishLanguage.Culture + ":" + key, () => EnglishLanguage.GetTranslation(key));
+			}
+		}
+		else {
+			value = GetOrAdd(EnglishLanguage.Culture + ":" + key, () => EnglishLanguage.GetTranslation(key));
+		}
+#else
 		if (Enabled) {
 			culture = culture ?? Culture ?? CultureInfo.CurrentUICulture;
 
 			string currentCultureKey = culture.Name + ":" + key;
-			value = _languages.GetOrAdd(currentCultureKey, k => GetTranslation(culture.Name, key));
+			value = GetOrAdd(currentCultureKey, () => GetTranslation(culture.Name, key));
 
 			// If the value couldn't be found, try the parent culture.
 			var currentCulture = culture;
 			while (value == null && currentCulture.Parent != CultureInfo.InvariantCulture) {
 				currentCulture = currentCulture.Parent;
 				string parentCultureKey = currentCulture.Name + ":" + key;
-				value = _languages.GetOrAdd(parentCultureKey, k => GetTranslation(currentCulture.Name, key));
+				value = GetOrAdd(parentCultureKey, () => GetTranslation(currentCulture.Name, key));
 			}
 
 			if (value == null && culture.Name != EnglishLanguage.Culture) {
 				// If it couldn't be found, try the fallback English (if we haven't tried it already).
 				if (!culture.IsNeutralCulture && culture.Parent.Name != EnglishLanguage.Culture) {
-					value = _languages.GetOrAdd(EnglishLanguage.Culture + ":" + key, k => EnglishLanguage.GetTranslation(key));
+					value = GetOrAdd(EnglishLanguage.Culture + ":" + key, () => EnglishLanguage.GetTranslation(key));
 				}
 			}
 		}
 		else {
-			value = _languages.GetOrAdd(EnglishLanguage.Culture + ":" + key, k => EnglishLanguage.GetTranslation(key));
+			value = GetOrAdd(EnglishLanguage.Culture + ":" + key, () => EnglishLanguage.GetTranslation(key));
 		}
+#endif
 
 		return value ?? string.Empty;
+	}
+
+	private string GetOrAdd(string key, Func<string> valueFactory) {
+#if NETWASM
+		if (_languages.TryGetValue(key, out var value)) return value;
+		value = valueFactory();
+		_languages[key] = value;
+		return value;
+#else
+		return _languages.GetOrAdd(key, _ => valueFactory());
+#endif
 	}
 
 	public void AddTranslation(string language, string key, string message) {
