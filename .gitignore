@@ -26,3 +26,5 @@ docs/_site/
 docs/Gemfile.lock
 docs/_build/
 src/FluentValidation.Tests.Benchmarks/BenchmarkDotNet.Artifacts/
+__pycache__/
+*.py[cod]

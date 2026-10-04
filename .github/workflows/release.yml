@@ -1,0 +1,376 @@
+name: Release
+
+on:
+  release:
+    types: [published]
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: Existing published GitHub Release tag to retry
+        required: true
+        type: string
+
+permissions:
+  contents: read
+  actions: read
+
+concurrency:
+  group: nuget-release-${{ github.event.release.tag_name || inputs.tag }}
+  cancel-in-progress: false
+
+jobs:
+  build:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 75
+    permissions:
+      actions: read
+      contents: write
+    outputs:
+      infrastructure_commit: ${{ steps.release.outputs.infrastructure_commit }}
+      source_commit: ${{ steps.release.outputs.source_commit }}
+      tag: ${{ steps.release.outputs.tag }}
+      version: ${{ steps.release.outputs.version }}
+      mode: ${{ steps.train-state.outputs.mode }}
+      preview_version: ${{ steps.release.outputs.preview_version }}
+      preview_tag: ${{ steps.release.outputs.preview_tag }}
+      stable_version: ${{ steps.release.outputs.stable_version }}
+      stable_tag: ${{ steps.release.outputs.stable_tag }}
+      artifact_name: ${{ steps.release.outputs.artifact_name }}
+    steps:
+      - name: Check out release infrastructure
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          ref: ${{ github.event.repository.default_branch }}
+          path: infrastructure
+      - name: Verify manual retry names a published release
+        if: github.event_name == 'workflow_dispatch'
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_TAG: ${{ inputs.tag }}
+        run: |
+          gh api "repos/${GITHUB_REPOSITORY}/releases/tags/${RELEASE_TAG}" \
+            --jq 'if .draft then error("Release is still a draft") else .tag_name end' |
+            grep -Fqx "${RELEASE_TAG}"
+      - name: Check out release source
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          ref: ${{ github.event.release.tag_name || inputs.tag }}
+          fetch-depth: 0
+          path: source
+      - name: Resolve GitHub Release
+        id: release
+        shell: bash
+        env:
+          DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
+          RELEASE_TAG: ${{ github.event.release.tag_name || inputs.tag }}
+        run: |
+          git -C source fetch --force origin \
+            "refs/tags/${RELEASE_TAG}:refs/tags/${RELEASE_TAG}" \
+            "+refs/heads/${DEFAULT_BRANCH}:refs/remotes/origin/${DEFAULT_BRANCH}"
+          source_commit="$(git -C source rev-parse HEAD)"
+          test "$(git -C source rev-parse "refs/tags/${RELEASE_TAG}^{commit}")" = "${source_commit}"
+          git -C source merge-base --is-ancestor \
+            "${source_commit}" "refs/remotes/origin/${DEFAULT_BRANCH}"
+          python3 infrastructure/eng/resolve-release.py \
+            --manifest infrastructure/eng/release-manifest.json \
+            --tag "${RELEASE_TAG}" \
+            --source-commit "${source_commit}" \
+            --output artifacts/release-manifest.json \
+            --train-directory artifacts/train-manifests \
+            --github-output "${GITHUB_OUTPUT}"
+          infrastructure_commit="$(git -C infrastructure rev-parse HEAD)"
+          printf 'infrastructure_commit=%s\n' "${infrastructure_commit}" >> "${GITHUB_OUTPUT}"
+      - name: Resolve release train state
+        id: train-state
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RESOLVED_MODE: ${{ steps.release.outputs.mode }}
+          PREVIEW_TAG: ${{ steps.release.outputs.preview_tag }}
+          ARTIFACT_NAME: ${{ steps.release.outputs.artifact_name }}
+        run: |
+          asset_count="$(gh api "repos/${GITHUB_REPOSITORY}/releases/tags/${PREVIEW_TAG}" \
+            --jq "[.assets[] | select(.name == \"$ARTIFACT_NAME.json\")] | length")"
+          python3 infrastructure/eng/release-train.py state \
+            --resolved-mode "$RESOLVED_MODE" \
+            --retained-manifest-count "$asset_count" \
+            --github-output "$GITHUB_OUTPUT"
+      - name: Install .NET SDK
+        if: steps.train-state.outputs.mode == 'build'
+        uses: actions/setup-dotnet@a98b56852c35b8e3190ac28c8c2271da59106c68 # v6
+        with:
+          global-json-file: source/global.json
+      - name: Build preview and stable packages
+        if: steps.train-state.outputs.mode == 'build'
+        shell: bash
+        env:
+          PREVIEW_VERSION: ${{ steps.release.outputs.preview_version }}
+          STABLE_VERSION: ${{ steps.release.outputs.stable_version }}
+        run: |
+          versions=("preview:$PREVIEW_VERSION" "stable:$STABLE_VERSION")
+          for item in "${versions[@]}"; do
+            channel="${item%%:*}"
+            version="${item#*:}"
+            candidate="$GITHUB_WORKSPACE/artifacts/candidates/$channel"
+            mkdir -p "$candidate/packages"
+            cp "artifacts/train-manifests/$channel-manifest.json" \
+              "$candidate/release-manifest.json"
+            bash source/eng/build-packages.sh \
+              --version "$version" \
+              --output "$candidate/packages"
+            python3 infrastructure/eng/verify-release-packages.py \
+              --manifest "$candidate/release-manifest.json" \
+              --packages "$candidate/packages" \
+              --source-root source \
+              --allowed-signers infrastructure/eng/release-signers \
+              --receipt "$candidate/release-package-receipt.json"
+          done
+      - name: Create immutable preview and stable train
+        if: steps.train-state.outputs.mode == 'build'
+        shell: bash
+        env:
+          PREVIEW_VERSION: ${{ steps.release.outputs.preview_version }}
+          PREVIEW_TAG: ${{ steps.release.outputs.preview_tag }}
+          STABLE_VERSION: ${{ steps.release.outputs.stable_version }}
+          STABLE_TAG: ${{ steps.release.outputs.stable_tag }}
+          ARTIFACT_NAME: ${{ steps.release.outputs.artifact_name }}
+        run: |
+          mkdir -p artifacts/train
+          for item in "preview:$PREVIEW_VERSION" "stable:$STABLE_VERSION"; do
+            channel="${item%%:*}"
+            version="${item#*:}"
+            candidate="artifacts/candidates/$channel"
+            python3 infrastructure/eng/release-train.py bundle \
+              --manifest "$candidate/release-manifest.json" \
+              --receipt "$candidate/release-package-receipt.json" \
+              --packages "$candidate/packages" \
+              --output "artifacts/train/netwasm-fluentvalidation-$channel-$version.zip"
+          done
+          python3 infrastructure/eng/release-train.py create \
+            --repository "$GITHUB_REPOSITORY" \
+            --source-commit "${{ steps.release.outputs.source_commit }}" \
+            --producing-tag "$PREVIEW_TAG" \
+            --preview-tag "$PREVIEW_TAG" \
+            --stable-tag "$STABLE_TAG" \
+            --run-id "$GITHUB_RUN_ID" \
+            --artifact-name "$ARTIFACT_NAME" \
+            --preview-bundle "artifacts/train/netwasm-fluentvalidation-preview-$PREVIEW_VERSION.zip" \
+            --stable-bundle "artifacts/train/netwasm-fluentvalidation-stable-$STABLE_VERSION.zip" \
+            --output "artifacts/train/$ARTIFACT_NAME.json"
+      - name: Retain verified preview and stable train
+        if: steps.train-state.outputs.mode == 'build'
+        uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6
+        with:
+          name: ${{ steps.release.outputs.artifact_name }}
+          path: artifacts/train/
+          compression-level: 0
+          if-no-files-found: error
+          retention-days: 90
+          overwrite: true
+      - name: Bind retained train manifest to preview GitHub Release
+        if: steps.train-state.outputs.mode == 'build'
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_TAG: ${{ steps.release.outputs.preview_tag }}
+          ASSET_NAME: ${{ steps.release.outputs.artifact_name }}.json
+        run: |
+          existing="$RUNNER_TEMP/existing-release-assets"
+          mkdir -p "$existing"
+          asset="artifacts/train/$ASSET_NAME"
+          if gh release download "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" \
+              --pattern "$ASSET_NAME" --dir "$existing" >/dev/null 2>&1; then
+            cmp --silent "$asset" "$existing/$ASSET_NAME" || {
+              echo "Published release-train manifest differs from this run." >&2
+              exit 1
+            }
+          else
+            gh release upload "$RELEASE_TAG" "$asset" --repo "$GITHUB_REPOSITORY"
+          fi
+      - name: Resolve retained release train coordinates
+        if: steps.train-state.outputs.mode != 'build'
+        id: retained-train
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PREVIEW_TAG: ${{ steps.release.outputs.preview_tag }}
+          STABLE_TAG: ${{ steps.release.outputs.stable_tag }}
+          SOURCE_COMMIT: ${{ steps.release.outputs.source_commit }}
+          ARTIFACT_NAME: ${{ steps.release.outputs.artifact_name }}
+        run: |
+          retained="artifacts/retained-train"
+          mkdir -p "$retained"
+          gh release download "$PREVIEW_TAG" \
+            --repo "$GITHUB_REPOSITORY" \
+            --pattern "$ARTIFACT_NAME.json" \
+            --dir "$retained"
+          python3 infrastructure/eng/release-train.py identity \
+            --train "$retained/$ARTIFACT_NAME.json" \
+            --repository "$GITHUB_REPOSITORY" \
+            --source-commit "$SOURCE_COMMIT" \
+            --producing-tag "$PREVIEW_TAG" \
+            --preview-tag "$PREVIEW_TAG" \
+            --stable-tag "$STABLE_TAG" \
+            --artifact-name "$ARTIFACT_NAME" \
+            --github-output "$GITHUB_OUTPUT"
+      - name: Resolve and verify retained candidate
+        if: steps.train-state.outputs.mode != 'build'
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_MODE: ${{ steps.train-state.outputs.mode }}
+          PREVIEW_TAG: ${{ steps.release.outputs.preview_tag }}
+          PREVIEW_VERSION: ${{ steps.release.outputs.preview_version }}
+          STABLE_TAG: ${{ steps.release.outputs.stable_tag }}
+          STABLE_VERSION: ${{ steps.release.outputs.stable_version }}
+          SOURCE_COMMIT: ${{ steps.release.outputs.source_commit }}
+          ARTIFACT_NAME: ${{ steps.release.outputs.artifact_name }}
+        run: |
+          retained="artifacts/retained-train"
+          downloaded="artifacts/downloaded-train"
+          channel=stable
+          version="$STABLE_VERSION"
+          release_tag="$STABLE_TAG"
+          if [[ "$RELEASE_MODE" == "resume" ]]; then
+            channel=preview
+            version="$PREVIEW_VERSION"
+            release_tag="$PREVIEW_TAG"
+          fi
+          candidate="artifacts/candidates/$channel"
+          mkdir -p "$downloaded"
+          train="$retained/$ARTIFACT_NAME.json"
+          gh run download "${{ steps.retained-train.outputs.producing_run_id }}" \
+            --repo "$GITHUB_REPOSITORY" \
+            --name "${{ steps.retained-train.outputs.artifact_name }}" \
+            --dir "$downloaded"
+          cmp --silent "$train" "$downloaded/$ARTIFACT_NAME.json"
+          bundle="$downloaded/netwasm-fluentvalidation-$channel-$version.zip"
+          python3 infrastructure/eng/release-train.py verify \
+            --train "$train" \
+            --bundle "$bundle" \
+            --channel "$channel" \
+            --repository "$GITHUB_REPOSITORY" \
+            --source-commit "$SOURCE_COMMIT" \
+            --release-tag "$release_tag"
+          python3 infrastructure/eng/release-train.py extract \
+            --bundle "$bundle" \
+            --output "$candidate"
+          python3 infrastructure/eng/resolve-release.py \
+            --manifest infrastructure/eng/release-manifest.json \
+            --tag "$release_tag" \
+            --source-commit "$SOURCE_COMMIT" \
+            --output "$candidate/release-manifest.json"
+          python3 infrastructure/eng/verify-release-packages.py \
+            --manifest "$candidate/release-manifest.json" \
+            --packages "$candidate/packages" \
+            --source-root source \
+            --allowed-signers infrastructure/eng/release-signers \
+            --receipt "$candidate/release-package-receipt.json"
+      - name: Retain resolved release artifacts
+        if: steps.train-state.outputs.mode != 'build'
+        uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6
+        with:
+          name: netwasm-fluentvalidation-${{ steps.release.outputs.version }}
+          path: artifacts/candidates/${{ steps.train-state.outputs.mode == 'resume' && 'preview' || 'stable' }}/
+          compression-level: 0
+          if-no-files-found: error
+          retention-days: 90
+          overwrite: true
+
+  publish:
+    needs: build
+    runs-on: ubuntu-24.04
+    timeout-minutes: 150
+    environment: nuget-release
+    permissions:
+      actions: read
+      contents: read
+      id-token: write
+    steps:
+      - name: Check out release infrastructure
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          ref: ${{ needs.build.outputs.infrastructure_commit }}
+          path: infrastructure
+      - name: Check out release source
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          ref: ${{ needs.build.outputs.tag }}
+          fetch-depth: 0
+          path: source
+      - name: Install .NET SDK
+        uses: actions/setup-dotnet@a98b56852c35b8e3190ac28c8c2271da59106c68 # v6
+        with:
+          global-json-file: source/global.json
+      - name: Download preview/stable release train
+        if: needs.build.outputs.mode == 'build'
+        uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131 # v7
+        with:
+          name: ${{ needs.build.outputs.artifact_name }}
+          path: artifacts/train
+      - name: Download verified retained release artifacts
+        if: needs.build.outputs.mode != 'build'
+        uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131 # v7
+        with:
+          name: netwasm-fluentvalidation-${{ needs.build.outputs.version }}
+          path: artifacts/publish
+      - name: Select preview candidate from release train
+        if: needs.build.outputs.mode == 'build'
+        shell: bash
+        run: |
+          train="artifacts/train/${{ needs.build.outputs.artifact_name }}.json"
+          bundle="artifacts/train/netwasm-fluentvalidation-preview-${{ needs.build.outputs.preview_version }}.zip"
+          python3 infrastructure/eng/release-train.py verify \
+            --train "$train" \
+            --bundle "$bundle" \
+            --channel preview \
+            --repository "$GITHUB_REPOSITORY" \
+            --source-commit "${{ needs.build.outputs.source_commit }}" \
+            --release-tag "${{ needs.build.outputs.preview_tag }}"
+          python3 infrastructure/eng/release-train.py extract \
+            --bundle "$bundle" \
+            --output artifacts/publish
+      - name: Revalidate release artifacts
+        shell: bash
+        run: |
+          mkdir -p artifacts/publish/timings
+          python3 infrastructure/eng/verify-release-packages.py \
+            --manifest artifacts/publish/release-manifest.json \
+            --packages artifacts/publish/packages \
+            --source-root source \
+            --allowed-signers infrastructure/eng/release-signers \
+            --receipt artifacts/publish/publish-package-receipt.json \
+            --timing-output artifacts/publish/timings/local-verification.json
+      - name: Reconcile NuGet state before requesting credentials
+        shell: bash
+        run: |
+          python3 infrastructure/eng/publish-release-packages.py \
+            --manifest artifacts/publish/release-manifest.json \
+            --packages artifacts/publish/packages \
+            --preflight \
+            --timing-output artifacts/publish/timings/feed-preflight.json
+      - name: Request temporary NuGet.org credential
+        id: login
+        uses: NuGet/login@8d196754b4036150537f80ac539e15c2f1028841 # v1
+        with:
+          user: ${{ vars.NUGET_USER }}
+      - name: Publish dependency waves
+        shell: bash
+        env:
+          NUGET_API_KEY: ${{ steps.login.outputs.NUGET_API_KEY }}
+        run: |
+          python3 infrastructure/eng/publish-release-packages.py \
+            --manifest artifacts/publish/release-manifest.json \
+            --packages artifacts/publish/packages \
+            --publish \
+            --timing-output artifacts/publish/timings/publication.json
+      - name: Retain release timing evidence
+        if: always()
+        uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6
+        with:
+          name: netwasm-fluentvalidation-release-timings-${{ needs.build.outputs.version }}
+          path: artifacts/publish/timings/
+          if-no-files-found: warn
+          retention-days: 90
+          overwrite: true

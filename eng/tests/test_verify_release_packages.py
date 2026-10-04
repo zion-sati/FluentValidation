@@ -1,0 +1,203 @@
+from __future__ import annotations
+
+import importlib.util
+import json
+import subprocess
+import tempfile
+import unittest
+import zipfile
+from pathlib import Path
+from unittest import mock
+
+
+SCRIPT = Path(__file__).parents[1] / "verify-release-packages.py"
+SPEC = importlib.util.spec_from_file_location("verify_release_packages", SCRIPT)
+assert SPEC is not None and SPEC.loader is not None
+MODULE = importlib.util.module_from_spec(SPEC)
+SPEC.loader.exec_module(MODULE)
+
+
+class VerifyReleasePackagesTests(unittest.TestCase):
+    def setUp(self) -> None:
+        self.temporary = tempfile.TemporaryDirectory()
+        self.root = Path(self.temporary.name)
+        self.manifest = {
+            "schemaVersion": 1,
+            "repository": "zion-sati/Example",
+            "repositoryUrl": "https://github.com/zion-sati/Example",
+            "releaseVersion": "0.1.0-rc.1",
+            "releaseTag": "v0.1.0-rc.1",
+            "sourceCommit": "a" * 40,
+            "packages": ["NetWasm.Example"],
+        }
+
+    def tearDown(self) -> None:
+        self.temporary.cleanup()
+
+    def create_package(
+        self,
+        *,
+        package_id: str = "NetWasm.Example",
+        version: str = "0.1.0-rc.1",
+        dependency_version: str = "[0.1.0-rc.1]",
+        repository_commit: str | None = None,
+    ) -> Path:
+        repository_commit = repository_commit or "a" * 40
+        path = self.root / f"{package_id}.{version}.nupkg"
+        nuspec = f"""<?xml version="1.0" encoding="utf-8"?>
+<package xmlns="http://schemas.microsoft.com/packaging/2013/05/nuspec.xsd">
+  <metadata>
+    <id>{package_id}</id>
+    <version>{version}</version>
+    <authors>Zion Sati</authors>
+    <description>Test package.</description>
+    <repository type="git" url="https://github.com/zion-sati/Example" commit="{repository_commit}" />
+    <dependencies>
+      <group targetFramework="NetWasm,Version=v0.1">
+        <dependency id="NetWasm.Dependency" version="{dependency_version}" />
+      </group>
+    </dependencies>
+  </metadata>
+</package>
+"""
+        with zipfile.ZipFile(path, "w") as archive:
+            archive.writestr(f"{package_id}.nuspec", nuspec)
+        return path
+
+    def test_accepts_exact_allowlisted_package(self) -> None:
+        self.create_package()
+
+        packages = MODULE.validate_packages(self.root, self.manifest)
+
+        self.assertEqual(["NetWasm.Example"], [package["id"] for package in packages])
+        self.assertEqual("a" * 40, packages[0]["repositoryCommit"])
+
+    def test_preview_package_uses_the_released_dependency_train(self) -> None:
+        self.manifest.update(
+            releaseVersion="0.6.0-preview.1",
+            releaseTag="netwasm-v0.6.0-preview.1",
+        )
+        self.create_package(
+            version="0.6.0-preview.1",
+            dependency_version="[0.6.0]",
+        )
+
+        packages = MODULE.validate_packages(self.root, self.manifest)
+
+        self.assertEqual("[0.6.0]", packages[0]["dependencies"][0]["version"])
+
+    def test_rejects_unexpected_package(self) -> None:
+        self.create_package(package_id="NetWasm.Unexpected")
+
+        with self.assertRaisesRegex(ValueError, "allowlist mismatch"):
+            MODULE.validate_packages(self.root, self.manifest)
+
+    def test_rejects_unpinned_netwasm_dependency(self) -> None:
+        self.create_package(dependency_version="0.1.0-rc.1")
+
+        with self.assertRaisesRegex(ValueError, "not pinned"):
+            MODULE.validate_packages(self.root, self.manifest)
+
+    def test_rejects_wrong_repository_commit(self) -> None:
+        self.create_package(repository_commit="b" * 40)
+
+        with self.assertRaisesRegex(ValueError, "repository commit"):
+            MODULE.validate_packages(self.root, self.manifest)
+
+    def test_writes_hash_bound_receipt(self) -> None:
+        self.create_package()
+        packages = MODULE.validate_packages(self.root, self.manifest)
+        receipt_path = self.root / "receipt.json"
+
+        MODULE.write_receipt(receipt_path, self.manifest, packages)
+
+        receipt = json.loads(receipt_path.read_text(encoding="utf-8"))
+        self.assertEqual("PASS", receipt["status"])
+        self.assertEqual(1, receipt["packageCount"])
+        self.assertEqual(64, len(receipt["packages"][0]["sha256"]))
+
+    def test_writes_local_verification_timing(self) -> None:
+        timing_path = self.root / "timings" / "local.json"
+
+        MODULE.write_timing(timing_path, self.manifest, 27, 1.23456)
+
+        timing = json.loads(timing_path.read_text(encoding="utf-8"))
+        self.assertEqual("local-verification", timing["operation"])
+        self.assertEqual("0.1.0-rc.1", timing["version"])
+        self.assertEqual(27, timing["packageCount"])
+        self.assertEqual(1.235, timing["durationSeconds"])
+
+    def test_accepts_github_release_lightweight_tag_without_signer_policy(self) -> None:
+        source = self.root / "source"
+        source.mkdir()
+        subprocess.run(["git", "init", "-q", source], check=True)
+        subprocess.run(["git", "-C", source, "config", "user.name", "Test"], check=True)
+        subprocess.run(
+            ["git", "-C", source, "config", "user.email", "test@example.invalid"],
+            check=True,
+        )
+        (source / "README.md").write_text("release\n", encoding="utf-8")
+        subprocess.run(["git", "-C", source, "add", "README.md"], check=True)
+        subprocess.run(["git", "-C", source, "commit", "-q", "-m", "Release"], check=True)
+        subprocess.run(
+            ["git", "-C", source, "tag", self.manifest["releaseTag"]], check=True
+        )
+        self.manifest["sourceCommit"] = subprocess.check_output(
+            ["git", "-C", source, "rev-parse", "HEAD"], text=True
+        ).strip()
+
+        MODULE.verify_source(source, self.manifest)
+
+        with mock.patch.object(MODULE, "verify_signature") as verify_signature:
+            MODULE.verify_source(source, self.manifest, self.root / "allowed-signers")
+
+        verify_signature.assert_called_once_with(
+            source,
+            self.root / "allowed-signers",
+            "verify-commit",
+            self.manifest["sourceCommit"],
+        )
+
+    def test_accepts_transparent_merge_with_signed_second_parent(self) -> None:
+        source = self.root / "source"
+        allowed_signers = self.root / "allowed-signers"
+        calls = {
+            ("rev-list", "--parents", "-n", "1", "merge"): "merge base signed-head",
+            ("rev-parse", "merge^{tree}"): "release-tree",
+            ("rev-parse", "signed-head^{tree}"): "release-tree",
+        }
+        direct_error = subprocess.CalledProcessError(1, ["git", "verify-commit"])
+        with mock.patch.object(
+            MODULE, "verify_signature", side_effect=[direct_error, None]
+        ) as verify_signature, mock.patch.object(
+            MODULE, "git", side_effect=lambda _root, *arguments: calls[arguments]
+        ):
+            MODULE.verify_commit_signature(source, allowed_signers, "merge")
+
+        self.assertEqual(
+            [
+                mock.call(source, allowed_signers, "verify-commit", "merge"),
+                mock.call(source, allowed_signers, "verify-commit", "signed-head"),
+            ],
+            verify_signature.call_args_list,
+        )
+
+    def test_rejects_merge_when_signed_parent_changes_the_tree(self) -> None:
+        source = self.root / "source"
+        allowed_signers = self.root / "allowed-signers"
+        calls = {
+            ("rev-list", "--parents", "-n", "1", "merge"): "merge base signed-head",
+            ("rev-parse", "merge^{tree}"): "merge-tree",
+            ("rev-parse", "signed-head^{tree}"): "signed-tree",
+        }
+        direct_error = subprocess.CalledProcessError(1, ["git", "verify-commit"])
+        with mock.patch.object(
+            MODULE, "verify_signature", side_effect=direct_error
+        ), mock.patch.object(
+            MODULE, "git", side_effect=lambda _root, *arguments: calls[arguments]
+        ), self.assertRaises(subprocess.CalledProcessError):
+            MODULE.verify_commit_signature(source, allowed_signers, "merge")
+
+
+if __name__ == "__main__":
+    unittest.main()

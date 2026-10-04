@@ -3,10 +3,10 @@ name: CI
 on:
   push:
     branches:
-    - main
-    - 9.x
-    - 10.x
-    - 11.x
+      - main
+      - 9.x
+      - 10.x
+      - 11.x
   pull_request:
     branches:
       - main
@@ -14,28 +14,64 @@ on:
       - 10.x
       - 11.x
 
+permissions:
+  contents: read
+
 jobs:
   build:
     strategy:
       matrix:
-        os: ['windows-latest', 'ubuntu-latest']
+        os: [windows-latest, ubuntu-latest]
     runs-on: ${{ matrix.os }}
     steps:
-    - name: Checkout
-      uses: actions/checkout@v2
-      with:
-        fetch-depth: 0
+      - name: Check out source
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          fetch-depth: 0
+      - name: Install .NET SDKs
+        uses: actions/setup-dotnet@a98b56852c35b8e3190ac28c8c2271da59106c68 # v6
+        with:
+          dotnet-version: |
+            10.0.401
+            9.0.x
+            8.0.x
+      - name: Build and test FluentValidation
+        run: ./build.ps1
+        shell: pwsh
+        env:
+          DOTNET_SKIP_FIRST_TIME_EXPERIENCE: 1
 
-    - name: Setup dotnet
-      uses: actions/setup-dotnet@v2
-      with:
-        dotnet-version: |
-          10.0.x
-          9.0.x
-          8.0.x
-
-    - name: Build and Test
-      run: ./build.ps1
-      shell: pwsh
-      env:
-        DOTNET_SKIP_FIRST_TIME_EXPERIENCE: 1
+  netwasm:
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Check out source
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          fetch-depth: 0
+      - name: Install .NET SDK
+        uses: actions/setup-dotnet@a98b56852c35b8e3190ac28c8c2271da59106c68 # v6
+        with:
+          global-json-file: global.json
+      - name: Verify release tooling
+        run: python3 -m unittest discover -s eng/tests -p 'test_*.py'
+      - name: Restore compatibility tests
+        run: dotnet restore tests/NetWasm.FluentValidation.Tests/NetWasm.FluentValidation.Tests.csproj --disable-build-servers --nologo
+      - name: Run desktop compatibility tests
+        run: >-
+          dotnet run
+          --project tests/NetWasm.FluentValidation.Tests/NetWasm.FluentValidation.Tests.csproj
+          --framework net10.0
+          --configuration Release
+          --no-restore
+          --no-launch-profile
+          --disable-build-servers
+      - name: Run NetWasm compatibility tests
+        run: >-
+          dotnet test
+          tests/NetWasm.FluentValidation.Tests/NetWasm.FluentValidation.Tests.csproj
+          --framework netwasm0.1
+          --configuration Release
+          --no-restore
+          --disable-build-servers
+          --nologo
+          -p:NetWasmOptimization=None
