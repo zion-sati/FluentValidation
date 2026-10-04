@@ -7,4 +7,5 @@ Construct validators explicitly and register them explicitly. Reflection-based
 assembly scanning, type-based validator factories, and automatic validator
 discovery are not included in this package.
 
-This package is a local development build. It has not been released to NuGet.
+Install `NetWasm.FluentValidation` with the same version as the NetWasm SDK and
+ported library packages used by the application.
