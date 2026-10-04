@@ -11,6 +11,7 @@
     <PackageProjectUrl>https://docs.fluentvalidation.net/</PackageProjectUrl>
     <RepositoryUrl>https://github.com/zion-sati/FluentValidation</RepositoryUrl>
     <RepositoryType>git</RepositoryType>
+    <PublishRepositoryUrl>true</PublishRepositoryUrl>
     <PackageReadmeFile>README.md</PackageReadmeFile>
     <GenerateDocumentationFile Condition="'$(Configuration)' == 'Release'">true</GenerateDocumentationFile>
     <GenerateNeutralResourcesLanguageAttribute>false</GenerateNeutralResourcesLanguageAttribute>
