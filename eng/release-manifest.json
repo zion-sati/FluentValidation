@@ -1,0 +1,11 @@
+{
+  "schemaVersion": 1,
+  "repository": "zion-sati/FluentValidation",
+  "repositoryUrl": "https://github.com/zion-sati/FluentValidation",
+  "releaseVersion": "0.6.0",
+  "releaseTag": "netwasm-v0.6.0",
+  "sourceCommit": "0000000000000000000000000000000000000000",
+  "packages": [
+    "NetWasm.FluentValidation"
+  ]
+}

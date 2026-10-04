@@ -22,7 +22,9 @@ using System;
 using System.Collections.Generic;
 using Results;
 using System.Linq;
+#if !NETWASM
 using System.Runtime.Serialization;
+#endif
 
 /// <summary>
 /// An exception that represents failed validation
@@ -75,6 +77,7 @@ public class ValidationException : Exception {
 		return "Validation failed: " + string.Join(string.Empty, arr);
 	}
 
+#if !NETWASM
 #if NET8_0_OR_GREATER
 	[Obsolete(DiagnosticId = "SYSLIB0051")]
 #endif
@@ -91,4 +94,5 @@ public class ValidationException : Exception {
 		info.AddValue("errors", Errors);
 		base.GetObjectData(info, context);
 	}
+#endif
 }

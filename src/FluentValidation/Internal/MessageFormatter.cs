@@ -26,8 +26,13 @@ using System.Text.RegularExpressions;
 public partial class MessageFormatter {
 	readonly Dictionary<string, object> _placeholderValues = new(2);
 
+#if NETWASM
+	private static readonly Regex _keyRegex = new Regex("{([^{}:]+)(?::([^{}]+))?}");
+	private static Regex KeyRegex() => _keyRegex;
+#else
 	[GeneratedRegex("{([^{}:]+)(?::([^{}]+))?}")]
 	private static partial Regex KeyRegex();
+#endif
 
 	/// <summary>
 	/// Default Property Name placeholder.
