@@ -129,7 +129,9 @@ project="${source_root}/src/NetWasm.FluentValidation/NetWasm.FluentValidation.cs
 NUGET_PACKAGES="${package_cache}" dotnet restore "${project}" \
   --configfile "${nuget_config}" \
   --disable-build-servers \
-  --nologo
+  --nologo \
+  -p:UseArtifactsOutput=true \
+  -p:ArtifactsPath="${build_root}/artifacts"
 NUGET_PACKAGES="${package_cache}" dotnet pack "${project}" \
   -c Release \
   --no-restore \
