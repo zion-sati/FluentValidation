@@ -10,3 +10,9 @@ discovery are not included in this package.
 `NetWasm.FluentValidation` 0.8.0 uses NetWasm SDK 0.8.1 and the 0.8.0 ported
 library packages. These versions need not be identical: use the supported
 dependency versions rather than changing all packages to a compiler patch version.
+
+The current profile does not support non-invariant cultures, expression member
+access on struct receivers, or expression boxing conversions. Ordinary instance
+fields on reference-type receivers are supported. These expression restrictions
+apply to accessor lambdas passed to validation rules, not to ordinary compiled
+C# field access or boxing. See NetWasm's [expression-tree profile](https://github.com/zion-sati/NetWasm/blob/main/docs/expression-trees.md).
