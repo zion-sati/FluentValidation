@@ -6,7 +6,7 @@
     <RootNamespace>FluentValidation</RootNamespace>
     <PackageVersion Condition="'$(PackageVersion)' == ''">0.0.0-local</PackageVersion>
     <Version>$(PackageVersion)</Version>
-    <Description>FluentValidation 12.1.1 for NetWasm.</Description>
+    <Description>FluentValidation 12.2.0 for NetWasm.</Description>
     <PackageLicenseExpression>Apache-2.0</PackageLicenseExpression>
     <PackageProjectUrl>https://docs.fluentvalidation.net/</PackageProjectUrl>
     <RepositoryUrl>https://github.com/zion-sati/FluentValidation</RepositoryUrl>
@@ -16,7 +16,7 @@
     <GenerateDocumentationFile Condition="'$(Configuration)' == 'Release'">true</GenerateDocumentationFile>
     <GenerateNeutralResourcesLanguageAttribute>false</GenerateNeutralResourcesLanguageAttribute>
     <DefineConstants>$(DefineConstants);NETWASM</DefineConstants>
-    <NetWasmLibrariesPackageVersion Condition="'$(NetWasmLibrariesPackageVersion)' == ''">0.7.0</NetWasmLibrariesPackageVersion>
+    <NetWasmLibrariesPackageVersion Condition="'$(NetWasmLibrariesPackageVersion)' == ''">0.8.0</NetWasmLibrariesPackageVersion>
     <NoWarn>$(NoWarn);1591</NoWarn>
   </PropertyGroup>
   <ItemGroup>
@@ -24,7 +24,7 @@
              Exclude="../FluentValidation/**/bin/**/*.cs;../FluentValidation/**/obj/**/*.cs;../FluentValidation/AssemblyScanner.cs;../FluentValidation/ValidatorFactoryBase.cs;../FluentValidation/IValidatorFactory.cs" />
     <Compile Include="../CommonAssemblyInfo.cs" Link="CommonAssemblyInfo.cs" />
     <None Include="README.md" Pack="true" PackagePath="/" />
-    <PackageReference Include="Zomp.SyncMethodGenerator" Version="1.3.8-beta" PrivateAssets="all" />
+    <PackageReference Include="Zomp.SyncMethodGenerator" Version="1.6.17" PrivateAssets="all" />
   </ItemGroup>
   <ItemGroup Condition="'$(TargetFramework)' == 'netwasm0.1'">
     <PackageReference Include="NetWasm.System.Linq" Version="[$(NetWasmLibrariesPackageVersion)]" />
