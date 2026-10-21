@@ -16,7 +16,7 @@
     <GenerateDocumentationFile Condition="'$(Configuration)' == 'Release'">true</GenerateDocumentationFile>
     <GenerateNeutralResourcesLanguageAttribute>false</GenerateNeutralResourcesLanguageAttribute>
     <DefineConstants>$(DefineConstants);NETWASM</DefineConstants>
-    <NetWasmLibrariesPackageVersion Condition="'$(NetWasmLibrariesPackageVersion)' == ''">0.9.0</NetWasmLibrariesPackageVersion>
+    <NetWasmLibrariesPackageVersion Condition="'$(NetWasmLibrariesPackageVersion)' == ''">0.10.0</NetWasmLibrariesPackageVersion>
     <NoWarn>$(NoWarn);1591</NoWarn>
   </PropertyGroup>
   <ItemGroup>
