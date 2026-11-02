@@ -41,24 +41,10 @@ jobs:
         env:
           DOTNET_SKIP_FIRST_TIME_EXPERIENCE: 1
 
-  # The NetWasm compatibility tests run on every supported NetWasm host.
+  # The NetWasm compatibility tests. The library's WebAssembly is the same on
+  # every host, and NetWasm's own CI covers its host toolchains, so one host runs them.
   netwasm:
-    runs-on: ${{ matrix.runner }}
-    name: netwasm / ${{ matrix.host }}
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
-          - host: linux-x64
-            runner: ubuntu-24.04
-          - host: linux-arm64
-            runner: ubuntu-24.04-arm
-          - host: macos-arm64
-            runner: macos-15
-          - host: windows-x64
-            runner: windows-2025
-          - host: windows-arm64
-            runner: windows-11-vs2026-arm
+    runs-on: ubuntu-24.04
     steps:
       - name: Check out source
         uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
@@ -69,7 +55,6 @@ jobs:
         with:
           global-json-file: global.json
       - name: Verify release tooling
-        if: matrix.host == 'linux-x64'
         run: python3 -m unittest discover -s eng/tests -p 'test_*.py'
       - name: Restore compatibility tests
         run: dotnet restore tests/NetWasm.FluentValidation.Tests/NetWasm.FluentValidation.Tests.csproj --disable-build-servers --nologo
