@@ -190,13 +190,16 @@ def inspect_package(
             dependency_id = dependency.get("id", "")
             dependency_version = dependency.get("version", "")
             dependencies.append({"id": dependency_id, "version": dependency_version})
+            # A minimum version, not an exact pin: the NetWasm packages are released more
+            # often than this repository's, and applications on a later release must not
+            # restore with NU1608.
             if (
                 dependency_id.startswith("NetWasm.")
-                and dependency_version != f"[{required_dependency_version}]"
+                and dependency_version != required_dependency_version
             ):
                 raise ValueError(
-                    f"{package_id} dependency {dependency_id} is not pinned to "
-                    f"[{required_dependency_version}]."
+                    f"{package_id} dependency {dependency_id} does not declare the minimum "
+                    f"version {required_dependency_version}."
                 )
 
     return {
