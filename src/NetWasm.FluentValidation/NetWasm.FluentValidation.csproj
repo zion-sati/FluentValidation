@@ -26,9 +26,11 @@
     <None Include="README.md" Pack="true" PackagePath="/" />
     <PackageReference Include="Zomp.SyncMethodGenerator" Version="1.6.17" PrivateAssets="all" />
   </ItemGroup>
+  <!-- Minimum versions: the Libraries packages are released more often than this one, and an
+       exact pin would warn NU1608 for every application on a later Libraries release. -->
   <ItemGroup Condition="'$(TargetFramework)' == 'netwasm0.1'">
-    <PackageReference Include="NetWasm.System.Linq" Version="[$(NetWasmLibrariesPackageVersion)]" />
-    <PackageReference Include="NetWasm.System.Text.RegularExpressions" Version="[$(NetWasmLibrariesPackageVersion)]" />
+    <PackageReference Include="NetWasm.System.Linq" Version="$(NetWasmLibrariesPackageVersion)" />
+    <PackageReference Include="NetWasm.System.Text.RegularExpressions" Version="$(NetWasmLibrariesPackageVersion)" />
   </ItemGroup>
   <PropertyGroup Condition="'$(TargetFramework)' == 'netwasm0.1'">
     <!-- FluentValidation is strong-named while the NetWasm reference assemblies are unsigned.
